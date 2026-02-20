@@ -10,15 +10,11 @@ services:
         "--bind_ip_all",
         "--port",
         "27017",
-        "--auth",
-        "--keyFile",
-        "/etc/mongo-keyfile"
       ]
     ports:
       - "27017:27017"
     volumes:
       - mongo1-data:/data/db
-      - ./mongo-keyfile:/etc/mongo-keyfile:ro
     networks:
       - mongo-net
     restart: unless-stopped
@@ -34,15 +30,11 @@ services:
         "--bind_ip_all",
         "--port",
         "27017",
-        "--auth",
-        "--keyFile",
-        "/etc/mongo-keyfile"
       ]
     ports:
       - "27018:27017"
     volumes:
       - mongo2-data:/data/db
-      - ./mongo-keyfile:/etc/mongo-keyfile:ro
     networks:
       - mongo-net
     restart: unless-stopped
@@ -58,15 +50,11 @@ services:
         "--bind_ip_all",
         "--port",
         "27017",
-        "--auth",
-        "--keyFile",
-        "/etc/mongo-keyfile"
       ]
     ports:
       - "27019:27017"
     volumes:
       - mongo3-data:/data/db
-      - ./mongo-keyfile:/etc/mongo-keyfile:ro
     networks:
       - mongo-net
     restart: unless-stopped
