@@ -132,6 +132,39 @@ if [ "$MODE" = "docker" ]; then
   fi
   log "✅ FCV detected."
 
+  # 5b) Version validation check
+  log "Checking Docker image and running MongoDB version..."
+  
+  if [ -f "$COMPOSE_FILE" ]; then
+    EXPECTED_VER=$(grep -i 'image:' "$COMPOSE_FILE" | head -n 1 | awk -F'mongo:' '{print $2}' | tr -d ' "\r\n')
+  else
+    EXPECTED_VER="unknown"
+  fi
+
+  # Query version from primary node running container
+  CURRENT_VER=$(docker exec "$PRIMARY_NODE" mongod --version 2>/dev/null | awk '/db version/ {print $3}' | sed 's/v//' | tr -d '\r\n[:space:]')
+  if [ -z "$CURRENT_VER" ]; then
+    # Fallback to querying db.version()
+    CURRENT_VER=$(run_mongosh "$PRIMARY_NODE" "db.version()" | tr -d '\r\n "')
+  fi
+
+  log "Expected : $EXPECTED_VER"
+  log "Current  : $CURRENT_VER"
+
+  if [ "$EXPECTED_VER" = "unknown" ]; then
+    fail "Could not determine Expected Version from $COMPOSE_FILE."
+  fi
+  if [ -z "$CURRENT_VER" ]; then
+    fail "Could not detect Current Version from running container $PRIMARY_NODE."
+  fi
+
+  # Check if CURRENT_VER starts with EXPECTED_VER (e.g. "8.0.26" starts with "8.0")
+  if [[ "$CURRENT_VER" != "$EXPECTED_VER"* ]]; then
+    log "❌ Version mismatch detected."
+    fail "Version mismatch detected. Validation Failed."
+  fi
+  log "✅ Version check passed."
+
   # 6) Optional write test
   if [ "$VALIDATE_WRITE_TEST" = "true" ]; then
     log "Running write test..."
