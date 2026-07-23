@@ -27,9 +27,9 @@ fi
 log "Lowering FCV to 6.0..."
 if [[ "$MODE" == "docker" ]]; then
     FCV_NODE=$(get_primary_node || echo "$MONGO1")
-    sudo docker exec "$FCV_NODE" mongosh $AUTH_ARGS --eval "const res = db.adminCommand({setFeatureCompatibilityVersion: '6.0'}); if (!res.ok) { print(JSON.stringify(res)); quit(1); }"
+    sudo docker exec "$FCV_NODE" mongosh $AUTH_ARGS --eval "const res = db.adminCommand({setFeatureCompatibilityVersion: '6.0', confirm: true}); if (!res.ok) { print(JSON.stringify(res)); quit(1); }"
 else
-    mongosh $AUTH_ARGS --eval "const res = db.adminCommand({setFeatureCompatibilityVersion: '6.0'}); if (!res.ok) { print(JSON.stringify(res)); quit(1); }"
+    mongosh $AUTH_ARGS --eval "const res = db.adminCommand({setFeatureCompatibilityVersion: '6.0',confirm: true}); if (!res.ok) { print(JSON.stringify(res)); quit(1); }"
 fi
 
 # STEP 2: Rollback execution based on MODE
