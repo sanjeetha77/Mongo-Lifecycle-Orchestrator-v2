@@ -26,9 +26,13 @@ require_cmd sed
 MODE="${MODE:-docker}"
 RS_NAME="${RS_NAME:-rs0}"
 
-AUTH_ENABLED="${AUTH_ENABLED:-true}"
-MONGO_ADMIN_USER="${MONGO_ADMIN_USER:-admin}"
-MONGO_ADMIN_PASS="${MONGO_ADMIN_PASS:-Admin123}"
+AUTH_ENABLED="${AUTH_ENABLED:-false}"
+
+if [ "$AUTH_ENABLED" = "true" ]; then
+  if [ -z "${MONGO_ADMIN_USER:-}" ] || [ -z "${MONGO_ADMIN_PASS:-}" ]; then
+    fail "Authentication is enabled (AUTH_ENABLED=true) but MONGO_ADMIN_USER or MONGO_ADMIN_PASS is not set in config.env."
+  fi
+fi
 MONGO_AUTH_DB="${MONGO_AUTH_DB:-admin}"
 
 VALIDATE_WRITE_TEST="${VALIDATE_WRITE_TEST:-false}"
@@ -96,6 +100,25 @@ if [ "$MODE" = "docker" ]; then
   run_mongosh "$PRIMARY_NODE" 'db.adminCommand({ping:1}).ok' | grep -q "1" \
     || fail "Ping failed on $PRIMARY_NODE"
   log "✅ Ping successful."
+
+  # Detect the actual primary node to execute write/admin commands on
+  log "Detecting active PRIMARY node..."
+  ACTUAL_PRIMARY=""
+  for node in "${RUNNING_NODES[@]}"; do
+    IS_PRIMARY_OUT=$(run_mongosh "$node" "const h = db.hello(); print(h.isWritablePrimary || h.ismaster || false);" 2>/dev/null || true)
+    IS_PRIMARY=$(echo "$IS_PRIMARY_OUT" | tr -d '\r\n[:space:]')
+    if [ "$IS_PRIMARY" = "true" ]; then
+      ACTUAL_PRIMARY="$node"
+      break
+    fi
+  done
+
+  if [ -n "$ACTUAL_PRIMARY" ]; then
+    log "✅ Active PRIMARY node detected: $ACTUAL_PRIMARY"
+    PRIMARY_NODE="$ACTUAL_PRIMARY"
+  else
+    log "⚠️ No active PRIMARY node detected; falling back to seed node $PRIMARY_NODE"
+  fi
 
   # 2) ReplicaSet health
   log "Checking ReplicaSet status..."
