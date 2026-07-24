@@ -15,8 +15,15 @@ LOG_FILE="${LOG_FILE:-/var/log/mongodb-upgrade.log}"
 BACKUP_DIR="/var/backups/mongodb-$(date +'%Y%m%d-%H%M%S')"
 mkdir -p "$BACKUP_DIR"
 
-log() { printf '[%(%F %T)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
-fail() { log "❌ ERROR: $1"; exit 1; }
+# Sourcing logging library
+LOGGER_SH="$BASE_DIR/modules/logger.sh"
+if [ -f "$LOGGER_SH" ]; then
+    # shellcheck disable=SC1090
+    source "$LOGGER_SH"
+else
+    log() { printf '[%(%F %T)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
+    fail() { log "❌ ERROR: $1"; exit 1; }
+fi
 
 log "=== MongoDB $TARGET_VERSION install START ==="
 
@@ -39,10 +46,22 @@ fi
 if [[ "$MODE" == "docker" ]]; then
     BACKUP_NODE=$(get_primary_node || echo "$MONGO1")
     log "Backing up Docker container $BACKUP_NODE..."
-    sudo docker exec "$BACKUP_NODE" mongodump $AUTH_ARGS --archive > "$BACKUP_DIR/backup.archive"
+    if sudo docker exec "$BACKUP_NODE" mongodump $AUTH_ARGS --archive > "$BACKUP_DIR/backup.archive"; then
+        set_log_context "EXPORT_BACKUP_STATUS" "Success"
+        log_success "Backup saved to $BACKUP_DIR/backup.archive"
+    else
+        set_log_context "EXPORT_BACKUP_STATUS" "Failed"
+        fail "Backup failed!"
+    fi
 else
     log "Backing up systemd service..."
-    sudo mongodump $AUTH_ARGS --out "$BACKUP_DIR/dump" >/dev/null 2>&1 || true
+    if sudo mongodump $AUTH_ARGS --out "$BACKUP_DIR/dump" >/dev/null 2>&1; then
+        set_log_context "EXPORT_BACKUP_STATUS" "Success"
+        log_success "Backup saved to $BACKUP_DIR/dump"
+    else
+        set_log_context "EXPORT_BACKUP_STATUS" "Failed"
+        fail "Backup failed!"
+    fi
 fi
 
 # 4. Upgrade workflow based on MODE
@@ -54,7 +73,7 @@ if [[ "$MODE" == "docker" ]]; then
     # Finalize FCV to 7.0 on the newly elected PRIMARY container
     log "Finalizing FCV to $TARGET_VERSION on PRIMARY ($PRIMARY_NODE)..."
     docker exec "$PRIMARY_NODE" mongosh $AUTH_ARGS --eval "db.adminCommand({setFeatureCompatibilityVersion: '$TARGET_VERSION', confirm: true})" >>"$LOG_FILE" 2>&1 || log "⚠️ FCV update failed; verify manually."
-    log "✅ Success: Upgraded replica containers to $TARGET_VERSION."
+    log_success "Upgraded replica containers to $TARGET_VERSION."
 else
     log "MODE=systemd: Upgrading MongoDB host binaries..."
     # CLEANUP PREVIOUS REPOS
@@ -88,7 +107,7 @@ else
     if [[ "$NEW_VER" == *"$TARGET_VERSION"* ]]; then
         log "Finalizing FCV to 7.0..."
         mongosh $AUTH_ARGS --eval "db.adminCommand({setFeatureCompatibilityVersion: '7.0', confirm: true})" >>"$LOG_FILE" 2>&1 || log "⚠️ FCV update failed; verify manually."
-        log "✅ Success: Installed $NEW_VER"
+        log_success "Installed $NEW_VER"
     else
         fail "Version mismatch! Requested 7.0 but got $NEW_VER"
     fi

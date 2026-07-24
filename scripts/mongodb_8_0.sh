@@ -31,8 +31,15 @@ BACKUP_DIR="$BACKUP_BASE/mongodb-$TS"
 
 mkdir -p "$(dirname "$LOG_FILE")" "$STATE_DIR" "$BACKUP_DIR"
 
-log() { printf '[%(%F %T)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
-fail() { log "❌ ERROR at line ${BASH_LINENO[0]}: $1"; exit 1; }
+# Sourcing logging library
+LOGGER_SH="$BASE_DIR/modules/logger.sh"
+if [ -f "$LOGGER_SH" ]; then
+    # shellcheck disable=SC1090
+    source "$LOGGER_SH"
+else
+    log() { printf '[%(%F %T)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
+    fail() { log "❌ ERROR at line ${BASH_LINENO[0]}: $1"; exit 1; }
+fi
 
 trap 'fail "Command '\''${BASH_COMMAND}'\'' failed (exit=$?)"' ERR
 
@@ -52,12 +59,22 @@ if [[ "$MODE" == "docker" ]]; then
     BACKUP_NODE=$(get_primary_node || echo "$MONGO1")
     log "MODE=docker: Performing logical backup from container $BACKUP_NODE..."
     # Stream backup out of container to host filesystem
-    sudo docker exec "$BACKUP_NODE" mongodump $AUTH_ARGS --archive > "$BACKUP_DIR/production_snapshot.archive"
-    log "✅ Docker logical backup saved to $BACKUP_DIR"
+    if sudo docker exec "$BACKUP_NODE" mongodump $AUTH_ARGS --archive > "$BACKUP_DIR/production_snapshot.archive"; then
+        set_log_context "EXPORT_BACKUP_STATUS" "Success"
+        log_success "Docker logical backup saved to $BACKUP_DIR"
+    else
+        set_log_context "EXPORT_BACKUP_STATUS" "Failed"
+        fail "Docker logical backup failed!"
+    fi
 else
     log "MODE=systemd: Performing host-level backup..."
-    sudo mongodump $AUTH_ARGS --out "$BACKUP_DIR/dump" > /dev/null
-    log "✅ Host logical backup saved to $BACKUP_DIR"
+    if sudo mongodump $AUTH_ARGS --out "$BACKUP_DIR/dump" > /dev/null; then
+        set_log_context "EXPORT_BACKUP_STATUS" "Success"
+        log_success "Host logical backup saved to $BACKUP_DIR"
+    else
+        set_log_context "EXPORT_BACKUP_STATUS" "Failed"
+        fail "Host logical backup failed!"
+    fi
 fi
 
 # 4. Prepare for 8.0 (Set FCV 7.0)
@@ -78,7 +95,7 @@ if [[ "$MODE" == "docker" ]]; then
     # Finalize FCV to 8.0 on the newly elected PRIMARY container
     log "Finalizing FCV to $TARGET_VERSION on PRIMARY ($PRIMARY_NODE)..."
     docker exec "$PRIMARY_NODE" mongosh $AUTH_ARGS --eval "db.adminCommand({setFeatureCompatibilityVersion: '$TARGET_VERSION', confirm: true})" >>"$LOG_FILE" 2>&1 || log "⚠️ FCV update failed; verify manually."
-    log "✅ Success: Upgraded replica containers to $TARGET_VERSION."
+    log_success "Upgraded replica containers to $TARGET_VERSION."
     
     # Save state for the Master Tool
     {

@@ -8,15 +8,25 @@ source "$BASE_DIR/config.env"
 if [[ "${MODE:-docker}" == "docker" ]]; then
     source "$BASE_DIR/modules/docker_upgrade.sh"
 fi
-LOG_FILE="/var/log/mongodb-rollback.log"
+LOG_FILE="${LOG_FILE:-/var/log/mongodb-rollback.log}"
+# Sourcing logging library
+LOGGER_SH="$BASE_DIR/modules/logger.sh"
+if [ -f "$LOGGER_SH" ]; then
+    # shellcheck disable=SC1090
+    source "$LOGGER_SH"
+else
+    log() { printf '[%(%F %T)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
+    fail() { log "❌ ERROR: $1"; exit 1; }
+fi
+
 TS="$(date +'%Y%m%d-%H%M%S')"
 BACKUP_DIR="/var/backups/mongodb-rollback-6to5-$TS"
 mkdir -p "$BACKUP_DIR"
 
-log() { printf '[%(%F %T)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
-fail() { log "❌ ERROR: $1"; exit 1; }
-
 log "=== 🛡️ Rollback 6.0 → 5.0 START ==="
+
+# Set rollback triggered context
+set_log_context "EXPORT_ROLLBACK_TRIGGERED" "Yes"
 
 # STEP 1: Lower FCV
 AUTH_ARGS=""
@@ -36,7 +46,7 @@ if [[ "$MODE" == "docker" ]]; then
     log "MODE=docker: Recreating Docker containers with target version 5.0..."
     source "$BASE_DIR/modules/docker_upgrade.sh"
     upgrade_docker_replica_set "5.0" "rollback"
-    log "✅ Rollback to 5.0 complete in Docker."
+    log_success "Rollback to 5.0 complete in Docker."
 else
     log "MODE=systemd: Downgrading MongoDB host binaries..."
     # STEP 2.1: PURGE ALL REPOS
@@ -68,5 +78,5 @@ else
         mongodb-org-tools=$TARGET_VER >> "$LOG_FILE" 2>&1
 
     sudo systemctl restart mongod
-    log "✅ Rollback to 5.0 complete."
+    log_success "Rollback to 5.0 complete."
 fi

@@ -1,6 +1,10 @@
-#!/usr/bin/env bash
-# modules/docker_upgrade.sh
-# Common module for upgrading/downgrading MongoDB Docker containers.
+# Sourcing logging library
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOGGER_SH="$BASE_DIR/modules/logger.sh"
+if [ -f "$LOGGER_SH" ]; then
+    # shellcheck disable=SC1090
+    source "$LOGGER_SH"
+fi
 
 upgrade_docker_replica_set() {
     local target_ver="$1"
@@ -11,7 +15,7 @@ upgrade_docker_replica_set() {
 
     # Ensure docker-compose configuration file exists
     if [[ ! -f "${COMPOSE_FILE:-}" ]]; then
-        echo "❌ [ERROR] COMPOSE_FILE not found: ${COMPOSE_FILE:-}" >&2
+        log_error "COMPOSE_FILE not found: ${COMPOSE_FILE:-}"
         exit 1
     fi
 
@@ -19,16 +23,16 @@ upgrade_docker_replica_set() {
     local current_ver
     current_ver=$(grep -i 'image:' "$COMPOSE_FILE" | head -n 1 | awk -F'mongo:' '{print $2}' | tr -d ' "\r\n')
     
-    echo "[INFO] Current Docker Image : mongo:${current_ver:-unknown}"
-    echo "[INFO] Target Docker Image : mongo:${target_ver}"
+    log_info "Current Docker Image : mongo:${current_ver:-unknown}"
+    log_info "Target Docker Image : mongo:${target_ver}"
 
     # 2. Update the Docker Compose configuration automatically in-place
     sed -i "s|\(image:[[:space:]]*mongo:\).*|\1${target_ver}|g" "$COMPOSE_FILE"
 
     # 3. Pull the new image
-    echo "[INFO] Pulling image..."
+    log_info "Pulling image..."
     if ! docker compose -f "$COMPOSE_FILE" pull; then
-        echo "❌ [ERROR] Failed to pull mongo:${target_ver} image." >&2
+        log_error "Failed to pull mongo:${target_ver} image."
         exit 1
     fi
 
@@ -39,7 +43,7 @@ upgrade_docker_replica_set() {
     fi
 
     # 5. Perform Zero-Downtime Rolling Upgrade of the replica set nodes
-    echo "[INFO] Starting Rolling Upgrade of Replica Set nodes..."
+    log_info "Starting Rolling Upgrade of Replica Set nodes..."
 
     # Find the current PRIMARY node before we start upgrading
     local initial_primary
@@ -50,7 +54,7 @@ upgrade_docker_replica_set() {
 
     if [ -n "$initial_primary" ]; then
         primary_node="$initial_primary"
-        echo "[INFO] Active PRIMARY node identified: $primary_node"
+        log_info "Active PRIMARY node identified: $primary_node"
         
         # We upgrade secondaries first to maintain quorum and primary availability
         for c in "${MONGO1:-mongo1}" "${MONGO2:-mongo2}" "${MONGO3:-mongo3}"; do
@@ -61,7 +65,7 @@ upgrade_docker_replica_set() {
         # Add primary at the end of the upgrade list
         nodes_to_upgrade+=("$primary_node")
     else
-        echo "[WARNING] No active PRIMARY node detected. Performing sequential upgrade."
+        log_warn "No active PRIMARY node detected. Performing sequential upgrade."
         nodes_to_upgrade=("${MONGO1:-mongo1}" "${MONGO2:-mongo2}" "${MONGO3:-mongo3}")
     fi
 
@@ -69,7 +73,7 @@ upgrade_docker_replica_set() {
     for node in "${nodes_to_upgrade[@]}"; do
         # If this node is the active primary, step it down first to avoid election interruptions
         if [ "$node" = "$primary_node" ] && [ -n "$primary_node" ]; then
-            echo "[INFO] Stepping down PRIMARY node $primary_node to elect a new primary..."
+            log_info "Stepping down PRIMARY node $primary_node to elect a new primary..."
             docker exec "$primary_node" mongosh $auth_args --quiet --eval "try { rs.stepDown(60); } catch(e) {}" 2>/dev/null || true
             sleep 5
         fi
@@ -77,25 +81,25 @@ upgrade_docker_replica_set() {
         # If this is a rollback/downgrade, we must clear the node's data volume to allow initial sync.
         # Otherwise, the container will crash due to WiredTiger storage engine version mismatches.
         if [ "$is_rollback" = true ]; then
-            echo "[INFO] Rollback detected: Stopping node $node and clearing its data volume..."
+            log_info "Rollback detected: Stopping node $node and clearing its data volume..."
             docker compose -f "$COMPOSE_FILE" stop "$node" >/dev/null 2>&1 || true
             docker compose -f "$COMPOSE_FILE" run --rm --entrypoint "sh -c 'find /data/db -mindepth 1 -delete'" "$node" >/dev/null 2>&1 || true
         fi
 
-        echo "[INFO] Recreating container: $node..."
+        log_info "Recreating container: $node..."
         if ! docker compose -f "$COMPOSE_FILE" up -d --no-deps "$node"; then
-            echo "❌ [ERROR] Failed to recreate container: $node" >&2
+            log_error "Failed to recreate container: $node"
             exit 1
         fi
 
-        echo "[INFO] Waiting for node $node to join replica set and become healthy..."
+        log_info "Waiting for node $node to join replica set and become healthy..."
         if ! wait_for_node_healthy "$node"; then
             exit 1
         fi
     done
 
     # 6. Verify final replica set status and retrieve the active PRIMARY node name
-    echo "[INFO] Finalizing and waiting for PRIMARY..."
+    log_info "Finalizing and waiting for PRIMARY..."
     local query_node="${MONGO_QUERY_NODE:-${MONGO1:-mongo1}}"
     local timeout=90
     local elapsed=0
@@ -137,11 +141,11 @@ upgrade_docker_replica_set() {
     done
 
     if [ "$replica_healthy" = false ]; then
-        echo "❌ [ERROR] Replica set did not stabilize/elect a PRIMARY within $timeout seconds." >&2
+        log_error "Replica set did not stabilize/elect a PRIMARY within $timeout seconds."
         exit 1
     fi
 
-    echo "[SUCCESS] Replica upgraded successfully."
+    log_success "Replica upgraded successfully."
     
     # Export PRIMARY_NODE so caller scripts can use it (e.g. for final FCV commands)
     PRIMARY_NODE="$detected_primary"
@@ -253,7 +257,7 @@ wait_for_node_healthy() {
     done
 
     if [ "$node_ok" = false ]; then
-        echo "❌ [ERROR] Node $node did not become healthy in replica set within $timeout seconds." >&2
+        log_error "Node $node did not become healthy in replica set within $timeout seconds."
         return 1
     fi
     return 0

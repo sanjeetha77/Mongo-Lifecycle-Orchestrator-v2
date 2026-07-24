@@ -12,8 +12,15 @@ fi
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
 
-log() { echo "[VALIDATE] $*"; }
-fail() { echo "❌ [VALIDATE] $*"; exit 1; }
+# Sourcing logging library
+LOGGER_SH="$BASE_DIR/modules/logger.sh"
+if [ -f "$LOGGER_SH" ]; then
+    # shellcheck disable=SC1090
+    source "$LOGGER_SH"
+else
+    log() { echo "[VALIDATE] $*"; }
+    fail() { echo "❌ [VALIDATE] $*"; exit 1; }
+fi
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
@@ -99,7 +106,7 @@ if [ "$MODE" = "docker" ]; then
   log "Checking ping..."
   run_mongosh "$PRIMARY_NODE" 'db.adminCommand({ping:1}).ok' | grep -q "1" \
     || fail "Ping failed on $PRIMARY_NODE"
-  log "✅ Ping successful."
+  log_success "Ping successful."
 
   # Detect the actual primary node to execute write/admin commands on
   log "Detecting active PRIMARY node..."
@@ -114,24 +121,24 @@ if [ "$MODE" = "docker" ]; then
   done
 
   if [ -n "$ACTUAL_PRIMARY" ]; then
-    log "✅ Active PRIMARY node detected: $ACTUAL_PRIMARY"
+    log_success "Active PRIMARY node detected: $ACTUAL_PRIMARY"
     PRIMARY_NODE="$ACTUAL_PRIMARY"
   else
-    log "⚠️ No active PRIMARY node detected; falling back to seed node $PRIMARY_NODE"
+    log_warn "No active PRIMARY node detected; falling back to seed node $PRIMARY_NODE"
   fi
 
   # 2) ReplicaSet health
   log "Checking ReplicaSet status..."
   RS_OK="$(run_mongosh "$PRIMARY_NODE" "rs.status().ok" | tr -d '\r\n ')"
   [ "$RS_OK" = "1" ] || fail "ReplicaSet not healthy (rs.status().ok != 1)"
-  log "✅ ReplicaSet is healthy."
+  log_success "ReplicaSet is healthy."
 
   # 3) Members count
   log "Checking ReplicaSet member count..."
   MEMBER_COUNT="$(run_mongosh "$PRIMARY_NODE" "rs.status().members.length" | tr -d '\r\n ')"
   log "Replica members detected: $MEMBER_COUNT"
   [ "$MEMBER_COUNT" -ge 3 ] || fail "ReplicaSet should have 3 members, found: $MEMBER_COUNT"
-  log "✅ Replica member count OK."
+  log_success "Replica member count OK."
 
   # 4) Check each member state
   log "Checking each member health..."
@@ -139,7 +146,7 @@ if [ "$MODE" = "docker" ]; then
     if docker ps --format '{{.Names}}' | grep -qx "$c"; then
       run_mongosh "$c" 'db.adminCommand({ping:1}).ok' | grep -q "1" \
         || fail "Ping failed on member: $c"
-      log "✅ Member OK: $c"
+      log_success "Member OK: $c"
     else
       fail "Replica member container is NOT running: $c"
     fi
@@ -153,7 +160,7 @@ if [ "$MODE" = "docker" ]; then
   if [ -z "$FCV" ] || [ "$FCV" = "null" ]; then
     fail "FCV could not be detected."
   fi
-  log "✅ FCV detected."
+  log_success "FCV detected."
 
   # 5b) Version validation check
   log "Checking Docker image and running MongoDB version..."
@@ -186,7 +193,7 @@ if [ "$MODE" = "docker" ]; then
     log "❌ Version mismatch detected."
     fail "Version mismatch detected. Validation Failed."
   fi
-  log "✅ Version check passed."
+  log_success "Version check passed."
 
   # 6) Optional write test
   if [ "$VALIDATE_WRITE_TEST" = "true" ]; then
@@ -195,7 +202,7 @@ if [ "$MODE" = "docker" ]; then
       db.getSiblingDB("validation_db").t.insertOne({ok:true,ts:new Date()});
       db.getSiblingDB("validation_db").t.findOne({ok:true}) != null ? 1 : 0
     ' | grep -q "1" || fail "Write test failed."
-    log "✅ Write test successful."
+    log_success "Write test successful."
   else
     log "Skipping write test (VALIDATE_WRITE_TEST=false)."
   fi
@@ -208,12 +215,12 @@ if [ "$MODE" = "docker" ]; then
       echo "$ERR_LINES"
       fail "Detected fatal/panic errors in MongoDB logs."
     fi
-    log "✅ No fatal log patterns found."
+    log_success "No fatal log patterns found."
   else
     log "Skipping log check (VALIDATE_LOG_CHECK=false)."
   fi
 
-  log "🎉 VALIDATION PASSED (docker replicaSet)."
+  log_success "VALIDATION PASSED (docker replicaSet)."
   exit 0
 fi
 
@@ -237,20 +244,20 @@ if [ "$MODE" = "systemd" ]; then
 
   systemctl is-active --quiet "$SERVICE_NAME" || fail "MongoDB service is not active."
 
-  log "✅ Service is running."
+  log_success "Service is running."
 
   log "Checking ping..."
   run_mongosh "local" 'db.adminCommand({ping:1}).ok' | grep -q "1" \
     || fail "Ping failed on localhost."
 
-  log "✅ Ping OK."
+  log_success "Ping OK."
 
   log "Checking FCV..."
   FCV="$(run_mongosh "local" 'db.adminCommand({getParameter:1,featureCompatibilityVersion:1}).featureCompatibilityVersion.version' | tr -d '\r\n "')"
   log "Current FCV: $FCV"
   [ -n "$FCV" ] || fail "FCV could not be detected."
 
-  log "🎉 VALIDATION PASSED (systemd)."
+  log_success "VALIDATION PASSED (systemd)."
   exit 0
 fi
 

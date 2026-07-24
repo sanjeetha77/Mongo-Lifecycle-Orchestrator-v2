@@ -15,8 +15,15 @@ source "$CONFIG_FILE"
 # Normalize MODE (removes spaces, CRLF, quotes)
 MODE="$(echo "${MODE:-docker}" | tr -d '\r' | tr -d '"' | xargs)"
 
-log() { echo "[PRECHECK] $*"; }
-fail() { echo "❌ [PRECHECK] $*"; exit 1; }
+# Sourcing logging library
+LOGGER_SH="$BASE_DIR/modules/logger.sh"
+if [ -f "$LOGGER_SH" ]; then
+    # shellcheck disable=SC1090
+    source "$LOGGER_SH"
+else
+    log() { echo "[PRECHECK] $*"; }
+    fail() { echo "❌ [PRECHECK] $*"; exit 1; }
+fi
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
@@ -77,13 +84,13 @@ if [ "$MODE" = "docker" ]; then
   log "Checking containers exist (mongo1/mongo2/mongo3)..."
   for c in "$MONGO1" "$MONGO2" "$MONGO3"; do
     if ! docker ps --format '{{.Names}}' | grep -qx "$c"; then
-      log "⚠️ Container $c not running yet (OK if not started)."
+      log_warn "Container $c not running yet (OK if not started)."
     else
-      log "✅ Container running: $c"
+      log_success "Container running: $c"
     fi
   done
 
-  log "Precheck completed for docker mode."
+  log_success "Precheck completed for docker mode."
   exit 0
 fi
 
@@ -106,14 +113,14 @@ if [ "$MODE" = "systemd" ]; then
   log "Detected service: $SERVICE_NAME"
 
   if systemctl is-active --quiet "$SERVICE_NAME"; then
-    log "✅ MongoDB service is running."
+    log_success "MongoDB service is running."
   else
-    log "⚠️ MongoDB service is not active."
+    log_warn "MongoDB service is not active."
   fi
 
-  require_cmd mongosh || log "⚠️ mongosh not found."
+  require_cmd mongosh || log_warn "mongosh not found."
 
-  log "Precheck completed for systemd mode."
+  log_success "Precheck completed for systemd mode."
   exit 0
 fi
 
